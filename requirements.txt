@@ -1,0 +1,5 @@
+streamlit
+python-dotenv
+langchain-community
+langchain-groq
+dotenv==0.9.9
