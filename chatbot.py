@@ -14,12 +14,12 @@ import uuid
 load_dotenv()
 
 st.set_page_config(
-    page_title="PrimeMind",
+    page_title="PrimeMind 2.0",
     page_icon="🤖",
     layout="centered"
 )
 
-st.title("💬 PrimeMind 2.0")
+st.title("💬 PrimeMind")
 
 # --------------------------------------------------
 # SYSTEM STYLE
