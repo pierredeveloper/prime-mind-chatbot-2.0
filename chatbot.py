@@ -280,8 +280,8 @@ from contextlib import contextmanager
 load_dotenv()
 
 st.set_page_config(
-    page_title="PrimeMind",
-    page_icon="💬",
+    page_title="💬 PrimeMind",
+    page_icon="chatgpt_3.png",
     layout="centered"
 )
 
