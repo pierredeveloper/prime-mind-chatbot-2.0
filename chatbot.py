@@ -413,7 +413,7 @@ if "conversation_id" not in st.session_state:
 # SIDEBAR (CHATGPT STYLE)
 # --------------------------------------------------
 with st.sidebar:
-    st.header("🗂 Conversations")
+    st.header("🗂 Chat History")
 
     if st.button("➕ New chat"):
         st.session_state.conversation_id = create_conversation()
