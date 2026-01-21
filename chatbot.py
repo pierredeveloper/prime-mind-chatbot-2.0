@@ -278,12 +278,12 @@ from datetime import datetime
 load_dotenv()
 
 st.set_page_config(
-    page_title="ChatGPT Clone",
-    page_icon="🤖",
+    page_title="PrimeMind 2.0",
+    page_icon="chatgpt_3.png",
     layout="centered"
 )
 
-st.title("💬 ChatGPT")
+st.title("💬 PrimeMind")
 
 # --------------------------------------------------
 # SYSTEM PROMPT (ChatGPT STYLE)
