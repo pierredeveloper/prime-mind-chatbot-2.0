@@ -15,7 +15,7 @@ load_dotenv()
 
 st.set_page_config(
     page_title="PrimeMind 2.0",
-    page_icon="assets/chatgpt_3.png",
+    page_icon="chatgpt_3.png",
     layout="centered"
 )
 
