@@ -475,7 +475,7 @@ def typewriter(text, delay=0.01):
 # --------------------------------------------------
 # USER INPUT
 # --------------------------------------------------
-user_prompt = st.chat_input("Message ChatGPT...")
+user_prompt = st.chat_input("Ask Chatbot...")
 
 if user_prompt:
     with st.chat_message("user", avatar=USER_AVATAR):
