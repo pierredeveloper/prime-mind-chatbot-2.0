@@ -265,132 +265,239 @@
 from dotenv import load_dotenv
 import streamlit as st
 from langchain_groq import ChatGroq
+import sqlite3
+import uuid
 import time
 import random
 import os
-import sqlite3
+from datetime import datetime
 
-# Load env variables
+# --------------------------------------------------
+# ENV + PAGE CONFIG
+# --------------------------------------------------
 load_dotenv()
 
-# -----------------------------
-# DATABASE SETUP (PERMANENT MEMORY)
-# -----------------------------
-DB_PATH = "chat_memory.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT,
-            content TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def load_chat_history():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM chat_history ORDER BY id ASC")
-    rows = c.fetchall()
-    conn.close()
-    return [{"role": r[0], "content": r[1]} for r in rows]
-
-def save_message(role, content):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO chat_history (role, content) VALUES (?, ?)",
-        (role, content)
-    )
-    conn.commit()
-    conn.close()
-
-# Initialize DB
-init_db()
-
-# -----------------------------
-# STREAMLIT SETUP
-# -----------------------------
 st.set_page_config(
-    page_title="Chatbot",
+    page_title="ChatGPT Clone",
     page_icon="🤖",
     layout="centered"
 )
 
-st.title("💬 PrimeMind")
+st.title("💬 ChatGPT")
 
-# Load memory into session
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = load_chat_history()
+# --------------------------------------------------
+# SYSTEM PROMPT (ChatGPT STYLE)
+# --------------------------------------------------
+SYSTEM_PROMPT = """
+You are ChatGPT, a helpful AI assistant.
 
-# Display memory
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+Answer clearly, accurately, and concisely.
+Use a natural, friendly, human tone.
+Adapt your explanations to the user's level.
+Avoid unnecessary repetition and verbosity.
 
-# -----------------------------
-# LLM SETUP
-# -----------------------------
-llm = ChatGroq(
-    api_key=st.secrets["GROQ_API_KEY"],
-    model="llama-3.3-70b-versatile",
-    temperature=0.9
-)
-
-SYSTEM_STYLE = """
-You are a helpful, intelligent AI assistant called PrimeMind.
-
-Be clear, accurate, and concise.
-Use a friendly, professional, human tone.
-Avoid repetition or robotic phrasing.
-
-Your goal is to provide practical answers that genuinely help.
+Your goal is to be genuinely helpful.
 """
 
-# -----------------------------
-# HUMAN TYPING EFFECT
-# -----------------------------
-def human_type_text(text, delay=0.010):
+# --------------------------------------------------
+# AVATARS
+# --------------------------------------------------
+USER_AVATAR = "🧑‍💻"
+ASSISTANT_AVATAR = "🤖"
+
+# --------------------------------------------------
+# DATABASE (PERMANENT MEMORY)
+# --------------------------------------------------
+DB_NAME = "chatgpt_clone.db"
+
+def get_conn():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            created_at TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT,
+            role TEXT,
+            content TEXT,
+            timestamp TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --------------------------------------------------
+# DB HELPERS
+# --------------------------------------------------
+def create_conversation():
+    cid = str(uuid.uuid4())
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO conversations VALUES (?, ?, ?)",
+        (cid, "New chat", datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return cid
+
+def get_conversations():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT id, title FROM conversations ORDER BY created_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_messages(cid):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "SELECT role, content FROM messages WHERE conversation_id=? ORDER BY id ASC",
+        (cid,)
+    )
+    rows = c.fetchall()
+    conn.close()
+    return [{"role": r, "content": c} for r, c in rows]
+
+def save_message(cid, role, content):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO messages VALUES (NULL, ?, ?, ?, ?)",
+        (cid, role, content, datetime.utcnow().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+def update_title(cid, text):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        "UPDATE conversations SET title=? WHERE id=?",
+        (text[:40], cid)
+    )
+    conn.commit()
+    conn.close()
+
+def delete_conversation(cid):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
+    c.execute("DELETE FROM conversations WHERE id=?", (cid,))
+    conn.commit()
+    conn.close()
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+if "conversation_id" not in st.session_state:
+    chats = get_conversations()
+    st.session_state.conversation_id = chats[0][0] if chats else create_conversation()
+
+# --------------------------------------------------
+# SIDEBAR (CHATGPT STYLE)
+# --------------------------------------------------
+with st.sidebar:
+    st.header("🗂 Conversations")
+
+    if st.button("➕ New chat"):
+        st.session_state.conversation_id = create_conversation()
+        st.rerun()
+
+    chats = get_conversations()
+    for cid, title in chats:
+        if st.button(title, key=cid):
+            st.session_state.conversation_id = cid
+            st.rerun()
+
+    st.divider()
+
+    if st.button("🗑 Delete chat"):
+        delete_conversation(st.session_state.conversation_id)
+        remaining = get_conversations()
+        st.session_state.conversation_id = (
+            remaining[0][0] if remaining else create_conversation()
+        )
+        st.rerun()
+
+# --------------------------------------------------
+# LOAD CHAT HISTORY
+# --------------------------------------------------
+chat_history = get_messages(st.session_state.conversation_id)
+
+for msg in chat_history:
+    avatar = USER_AVATAR if msg["role"] == "user" else ASSISTANT_AVATAR
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
+
+# --------------------------------------------------
+# LLM
+# --------------------------------------------------
+llm = ChatGroq(
+    api_key=os.getenv("GROQ_API_KEY"),
+    model="llama-3.3-70b-versatile",
+    temperature=0.7,
+    model_kwargs={"top_p": 0.9}
+)
+
+# --------------------------------------------------
+# TYPING EFFECT
+# --------------------------------------------------
+def typewriter(text, delay=0.01):
     for char in text:
         yield char
         time.sleep(delay)
 
-# -----------------------------
-# CHAT INPUT
-# -----------------------------
-user_prompt = st.chat_input("Ask Chatbot...")
+# --------------------------------------------------
+# USER INPUT
+# --------------------------------------------------
+user_prompt = st.chat_input("Message ChatGPT...")
 
 if user_prompt:
-    # Display user message
-    st.chat_message("user").markdown(user_prompt)
-    st.session_state.chat_history.append({"role": "user", "content": user_prompt})
-    save_message("user", user_prompt)
+    with st.chat_message("user", avatar=USER_AVATAR):
+        st.markdown(user_prompt)
 
-    randomizer = f"(variation_key: {random.randint(1, 999999)})"
+    save_message(st.session_state.conversation_id, "user", user_prompt)
 
-    messages = [
-        {"role": "system", "content": SYSTEM_STYLE},
-        {"role": "system", "content": randomizer}
-    ] + st.session_state.chat_history
+    if len(chat_history) == 0:
+        update_title(st.session_state.conversation_id, user_prompt)
 
-    # LLM response
+    randomizer = f"(response_variation: {random.randint(1, 999999)})"
+
+    messages = (
+        [{"role": "system", "content": SYSTEM_PROMPT},
+         {"role": "system", "content": randomizer}]
+        + chat_history
+        + [{"role": "user", "content": user_prompt}]
+    )
+
     response = llm.invoke(messages)
-    assistant_response = response.content
+    assistant_reply = response.content
 
-    # Save assistant reply
-    st.session_state.chat_history.append({
-        "role": "assistant",
-        "content": assistant_response
-    })
-    save_message("assistant", assistant_response)
+    save_message(
+        st.session_state.conversation_id,
+        "assistant",
+        assistant_reply
+    )
 
-    # Display with typing animation
-    with st.chat_message("assistant"):
-        st.write_stream(human_type_text(assistant_response))
+    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
+        st.write_stream(typewriter(assistant_reply))
+
 
 
 
