@@ -389,7 +389,7 @@ load_dotenv()
 
 st.set_page_config(
     page_title="PrimeMind",
-    page_icon="chatgpt_3.png",
+    page_icon="chatgpt_3.png",  # make sure file exists
     layout="centered"
 )
 
@@ -399,8 +399,9 @@ st.title("💬 PrimeMind")
 # SYSTEM STYLE
 # --------------------------------------------------
 SYSTEM_STYLE = """
-You are a helpful, intelligent AI assistant. Be clear, accurate, and concise.
+You are a helpful, intelligent AI assistant.
 
+Be clear, accurate, and concise.
 Use a friendly, professional, human tone.
 Avoid repetition or robotic phrasing.
 
@@ -512,7 +513,7 @@ if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = chats[0][0] if chats else create_conversation()
 
 # --------------------------------------------------
-# SIDEBAR (CHATGPT STYLE)
+# SIDEBAR
 # --------------------------------------------------
 with st.sidebar:
     st.header("🗂 Chat History")
@@ -531,21 +532,18 @@ with st.sidebar:
 
     if st.button("🗑 Delete Chat"):
         delete_conversation(st.session_state.conversation_id)
-
         remaining = get_conversations()
-        if remaining:
-            st.session_state.conversation_id = remaining[0][0]
-        else:
-            st.session_state.conversation_id = create_conversation()
-
+        st.session_state.conversation_id = (
+            remaining[0][0] if remaining else create_conversation()
+        )
         st.rerun()
 
 # --------------------------------------------------
-# LOAD CHAT HISTORY
+# LOAD CHAT HISTORY (✅ FIXED)
 # --------------------------------------------------
 chat_history = get_messages(st.session_state.conversation_id)
 
-for msg in st.session_state.chat_history:
+for msg in chat_history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
@@ -560,7 +558,7 @@ llm = ChatGroq(
 )
 
 # --------------------------------------------------
-# HUMAN TYPING
+# HUMAN TYPING EFFECT
 # --------------------------------------------------
 def human_type_text(text, delay=0.01):
     for char in text:
@@ -573,6 +571,9 @@ def human_type_text(text, delay=0.01):
 user_prompt = st.chat_input("Ask Chatbot...")
 
 if user_prompt:
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+
     save_message(st.session_state.conversation_id, "user", user_prompt)
 
     if len(chat_history) == 0:
