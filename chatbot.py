@@ -19,7 +19,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("💬 PrimeMind")
+st.title("PrimeMind")
 
 # --------------------------------------------------
 # SYSTEM PROMPT (ChatGPT STYLE)
