@@ -1234,33 +1234,27 @@ import sqlite3
 import random
 import json
 import hashlib
+import secrets
+import re
+import time
+import base64
+import tempfile
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import streamlit as st
+from gtts import gTTS
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-# --------------------------------------------------
-# ENV + PAGE CONFIG
-# --------------------------------------------------
 load_dotenv()
 
-st.set_page_config(
-    page_title="PrimeMind 4.0",
-    page_icon="chatgpt_3.png",
-    layout="centered"
-)
-
-st.title("PrimeMind")
+st.set_page_config(page_title="PrimeMind 4.0", layout="centered")
 
 # --------------------------------------------------
 # SYSTEM PROMPT
 # --------------------------------------------------
-SYSTEM_PROMPT = """You are a helpful AI assistant called PrimeMind..."""
+SYSTEM_PROMPT = "You are PrimeMind, a helpful AI assistant."
 
-# --------------------------------------------------
-# AVATARS
-# --------------------------------------------------
 USER_AVATAR = "🧑‍💻"
 ASSISTANT_AVATAR = "🤖"
 
@@ -1276,32 +1270,29 @@ def init_db():
     conn = get_conn()
     c = conn.cursor()
 
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password TEXT
-        )
-    """)
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        salt TEXT,
+        created_at TEXT
+    )""")
 
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            user_id INTEGER,
-            title TEXT,
-            created_at TEXT
-        )
-    """)
+    c.execute("""CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        title TEXT,
+        created_at TEXT
+    )""")
 
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT,
-            role TEXT,
-            content TEXT,
-            timestamp TEXT
-        )
-    """)
+    c.execute("""CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT,
+        role TEXT,
+        content TEXT,
+        timestamp TEXT
+    )""")
 
     conn.commit()
     conn.close()
@@ -1309,280 +1300,190 @@ def init_db():
 init_db()
 
 # --------------------------------------------------
-# SECURITY
+# AUTH
 # --------------------------------------------------
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def hash_password(pw, salt=None):
+    if not salt:
+        salt = secrets.token_hex(16)
+    return hashlib.sha256((pw + salt).encode()).hexdigest(), salt
 
-# --------------------------------------------------
-# AUTH FUNCTIONS
-# --------------------------------------------------
-def register_user(username, password):
-    conn = get_conn()
-    c = conn.cursor()
+def register_user(username, email, password):
+    pw, salt = hash_password(password)
     try:
-        c.execute(
-            "INSERT INTO users (username, password) VALUES (?, ?)",
-            (username, hash_password(password))
-        )
+        conn = get_conn()
+        conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
+                     (str(uuid.uuid4()), username, email, pw, salt, datetime.utcnow().isoformat()))
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except:
         return False
-    finally:
-        conn.close()
 
-def authenticate_user(username, password):
+def authenticate(username, password):
     conn = get_conn()
-    c = conn.cursor()
-
-    c.execute("SELECT id, password FROM users WHERE username=?", (username,))
-    user = c.fetchone()
-    conn.close()
-
-    if user and user[1] == hash_password(password):
-        return user[0]
-    return None
+    row = conn.execute("SELECT id, password_hash, salt FROM users WHERE username=?", (username,)).fetchone()
+    if row:
+        uid, pw, salt = row
+        if hash_password(password, salt)[0] == pw:
+            return True, uid
+    return False, None
 
 # --------------------------------------------------
-# CONVERSATION HELPERS
+# CHAT DB
 # --------------------------------------------------
-def create_conversation(user_id):
+def create_chat(uid):
     cid = str(uuid.uuid4())
     conn = get_conn()
-    c = conn.cursor()
-
-    c.execute(
-        "INSERT INTO conversations VALUES (?, ?, ?, ?)",
-        (cid, user_id, "New chat", datetime.utcnow().isoformat())
-    )
-
+    conn.execute("INSERT INTO conversations VALUES (?, ?, ?, ?)",
+                 (cid, uid, "New chat", datetime.utcnow().isoformat()))
     conn.commit()
-    conn.close()
     return cid
-
-def get_conversations(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-
-    c.execute(
-        "SELECT id, title FROM conversations WHERE user_id=? ORDER BY created_at DESC",
-        (user_id,)
-    )
-
-    rows = c.fetchall()
-    conn.close()
-    return rows
 
 def get_messages(cid):
     conn = get_conn()
-    c = conn.cursor()
+    rows = conn.execute("SELECT role, content FROM messages WHERE conversation_id=?", (cid,))
+    return rows.fetchall()
 
-    c.execute(
-        "SELECT role, content, timestamp FROM messages WHERE conversation_id=? ORDER BY id ASC",
-        (cid,)
-    )
-
-    rows = c.fetchall()
-    conn.close()
-
-    return [{"role": r, "content": c, "timestamp": t} for r, c, t in rows]
-
-def save_message(cid, role, content):
+def save_msg(cid, role, content):
     conn = get_conn()
-    c = conn.cursor()
-
-    c.execute(
-        "INSERT INTO messages VALUES (NULL, ?, ?, ?, ?)",
-        (cid, role, content, datetime.utcnow().isoformat())
-    )
-
+    conn.execute("INSERT INTO messages VALUES (NULL, ?, ?, ?, ?)",
+                 (cid, role, content, datetime.utcnow().isoformat()))
     conn.commit()
-    conn.close()
-
-def update_title(cid, text):
-    conn = get_conn()
-    c = conn.cursor()
-
-    title = text[:40] + "..." if len(text) > 40 else text
-
-    c.execute(
-        "UPDATE conversations SET title=? WHERE id=?",
-        (title, cid)
-    )
-
-    conn.commit()
-    conn.close()
-
-def delete_conversation(cid):
-    conn = get_conn()
-    c = conn.cursor()
-
-    c.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
-    c.execute("DELETE FROM conversations WHERE id=?", (cid,))
-
-    conn.commit()
-    conn.close()
-
-def expire_conversations(days=30):
-    conn = get_conn()
-    c = conn.cursor()
-
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-    c.execute("DELETE FROM conversations WHERE created_at < ?", (cutoff,))
-
-    conn.commit()
-    conn.close()
 
 # --------------------------------------------------
-# SESSION STATE
+# EFFECTS
 # --------------------------------------------------
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+def typewriter(text, delay=0.01):
+    output = ""
+    for char in text:
+        output += char
+        yield output + "▌"
+        time.sleep(delay)
+    yield output
 
-if "user_id" not in st.session_state:
-    st.session_state.user_id = None
+def typing_indicator(ph):
+    for dots in ["", ".", "..", "..."]:
+        ph.markdown(f"*PrimeMind is typing{dots}*")
+        time.sleep(0.3)
 
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = ""
+def play_sound(url, loop=False):
+    loop_attr = "loop" if loop else ""
+    st.markdown(f"""
+    <audio autoplay {loop_attr}>
+    <source src="{url}" type="audio/mp3">
+    </audio>
+    """, unsafe_allow_html=True)
+
+def speak(text):
+    tts = gTTS(text)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+        tts.save(f.name)
+        audio = open(f.name, "rb").read()
+    b64 = base64.b64encode(audio).decode()
+    st.markdown(f"""
+    <audio autoplay>
+    <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+    </audio>
+    """, unsafe_allow_html=True)
+
+# --------------------------------------------------
+# SESSION
+# --------------------------------------------------
+if "auth" not in st.session_state:
+    st.session_state.auth = False
 
 # --------------------------------------------------
 # AUTH UI
 # --------------------------------------------------
-if not st.session_state.authenticated:
+if not st.session_state.auth:
+    tab1, tab2 = st.tabs(["Login", "Signup"])
 
-    mode = st.radio("Choose Option", ["Login", "Sign Up"])
+    with tab1:
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        if st.button("Login"):
+            ok, uid = authenticate(u, p)
+            if ok:
+                st.session_state.auth = True
+                st.session_state.uid = uid
+                st.session_state.cid = create_chat(uid)
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
 
-    if mode == "Login":
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-
-            if st.form_submit_button("Login"):
-                user_id = authenticate_user(username, password)
-
-                if user_id:
-                    st.session_state.authenticated = True
-                    st.session_state.user_id = user_id
-                    st.session_state.conversation_id = create_conversation(user_id)
-                    st.success("Login successful")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
-
-    else:
-        with st.form("signup_form"):
-            username = st.text_input("Create Username")
-            password = st.text_input("Create Password", type="password")
-
-            if st.form_submit_button("Sign Up"):
-                if register_user(username, password):
-                    st.success("Account created! Please login.")
-                else:
-                    st.error("Username already exists")
+    with tab2:
+        u = st.text_input("New Username")
+        e = st.text_input("Email")
+        p = st.text_input("Password", type="password")
+        if st.button("Create Account"):
+            if register_user(u, e, p):
+                st.success("Account created")
+            else:
+                st.error("Error")
 
 # --------------------------------------------------
-# CHAT UI
+# MAIN APP
 # --------------------------------------------------
-if st.session_state.authenticated:
+else:
+    st.title("⚡ PrimeMind")
 
-    chats = get_conversations(st.session_state.user_id)
+    if st.button("Logout"):
+        st.session_state.clear()
+        st.rerun()
 
-    for cid, title in chats:
-        if st.button(f"💬 {title}", key=cid):
-            st.session_state.conversation_id = cid
-            st.rerun()
+    msgs = get_messages(st.session_state.cid)
 
-    chat_history = get_messages(st.session_state.conversation_id)
+    for role, content in msgs:
+        with st.chat_message(role):
+            st.markdown(content)
 
-    for msg in chat_history:
-        avatar = USER_AVATAR if msg["role"] == "user" else ASSISTANT_AVATAR
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
-
-    prompt = st.chat_input("Ask PrimeMind...")
+    prompt = st.chat_input("Ask...")
 
     if prompt:
-        with st.chat_message("user", avatar=USER_AVATAR):
+        with st.chat_message("user"):
             st.markdown(prompt)
 
-        save_message(st.session_state.conversation_id, "user", prompt)
-
-        if len(chat_history) == 0:
-            update_title(st.session_state.conversation_id, prompt)
+        save_msg(st.session_state.cid, "user", prompt)
 
         messages = [SystemMessage(content=SYSTEM_PROMPT)]
-
-        for msg in chat_history:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
+        for r, c in msgs:
+            if r == "user":
+                messages.append(HumanMessage(content=c))
             else:
-                messages.append(AIMessage(content=msg["content"]))
-
+                messages.append(AIMessage(content=c))
         messages.append(HumanMessage(content=prompt))
 
-        try:
-            with st.spinner("Thinking..."):
-                api_key = os.getenv("GROQ_API_KEY")
+        with st.chat_message("assistant"):
+            ph = st.empty()
 
-                llm = ChatGroq(
-                    api_key=api_key,
-                    model="llama-3.3-70b-versatile",
-                    temperature=0.7
-                )
+            typing_indicator(ph)
 
-                response = llm.invoke(messages)
-                reply = response.content
-
-            save_message(st.session_state.conversation_id, "assistant", reply)
-
-            with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
-                st.write(reply)
-
-        except Exception as e:
-            st.error(str(e))
-
-        expire_conversations()
-
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
-with st.sidebar:
-    if st.session_state.authenticated:
-
-        if st.button("➕ New Chat"):
-            st.session_state.conversation_id = create_conversation(
-                st.session_state.user_id
+            llm = ChatGroq(
+                api_key=os.getenv("GROQ_API_KEY"),
+                model="llama-3.3-70b-versatile"
             )
-            st.rerun()
 
-        if st.button("🚪 Logout"):
-            st.session_state.authenticated = False
-            st.session_state.user_id = None
-            st.session_state.conversation_id = ""
-            st.rerun()
+            res = llm.invoke(messages)
+            reply = res.content
 
-        chats = get_conversations(st.session_state.user_id)
+            # 🔊 start typing sound
+            play_sound("https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3", loop=True)
 
-        for cid, title in chats:
-            if st.button(title, key=f"side_{cid}"):
-                st.session_state.conversation_id = cid
-                st.rerun()
+            # 🎙️ voice
+            speak(reply)
 
-        if st.button("🗑 Delete Chat"):
-            delete_conversation(st.session_state.conversation_id)
-            st.session_state.conversation_id = create_conversation(
-                st.session_state.user_id
-            )
-            st.rerun()
+            for t in typewriter(reply, delay=0.01):
+                ph.markdown(t)
 
-        messages = get_messages(st.session_state.conversation_id)
-        if messages:
-            st.download_button(
-                "📥 Export Chat",
-                json.dumps(messages, indent=2),
-                file_name="chat.json"
-            )
+            # 🔔 done sound
+            play_sound("https://assets.mixkit.co/active_storage/sfx/957/957-preview.mp3")
+
+        save_msg(st.session_state.cid, "assistant", reply)
+
+
+
+
+
+
 
 
 
