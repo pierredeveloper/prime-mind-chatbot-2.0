@@ -309,35 +309,39 @@ ASSISTANT_AVATAR = "🤖"
 # --------------------------------------------------
 # DATABASE (PERMANENT MEMORY)
 # --------------------------------------------------
-# Using SQLite for local persistent storage. 
-# Note: If deploying to Streamlit Cloud, this file will reset on reboot. 
-# For cloud deployment, consider using PostgreSQL or Supabase.
 DB_NAME = "chatgpt_clone.db"
 
 def get_conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 def init_db():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            created_at TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id TEXT,
-            role TEXT,
-            content TEXT,
-            timestamp TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                created_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                role TEXT,
+                content TEXT,
+                timestamp TEXT
+            )
+        """)
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error initializing database: {e}. Please ensure the database file is not locked and has proper write permissions.")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
 
 init_db()
 
@@ -346,64 +350,107 @@ init_db()
 # --------------------------------------------------
 def create_conversation():
     cid = str(uuid.uuid4())
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO conversations VALUES (?, ?, ?)",
-        (cid, "New chat", datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO conversations VALUES (?, ?, ?)",
+            (cid, "New chat", datetime.utcnow().isoformat())
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error creating conversation: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
     return cid
 
 def get_conversations():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT id, title FROM conversations ORDER BY created_at DESC")
-    rows = c.fetchall()
-    conn.close()
+    conn = None
+    rows = []
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT id, title FROM conversations ORDER BY created_at DESC")
+        rows = c.fetchall()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error getting conversations: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
     return rows
 
 def get_messages(cid):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "SELECT role, content, timestamp FROM messages WHERE conversation_id=? ORDER BY id ASC",
-        (cid,)
-    )
-    rows = c.fetchall()
-    conn.close()
+    conn = None
+    rows = []
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "SELECT role, content, timestamp FROM messages WHERE conversation_id=? ORDER BY id ASC",
+            (cid,)
+        )
+        rows = c.fetchall()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error getting messages: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
     return [{"role": r, "content": c, "timestamp": t} for r, c, t in rows]
 
 def save_message(cid, role, content):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO messages VALUES (NULL, ?, ?, ?, ?)",
-        (cid, role, content, datetime.utcnow().isoformat())
-    )
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO messages VALUES (NULL, ?, ?, ?, ?)",
+            (cid, role, content, datetime.utcnow().isoformat())
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error saving message: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
 
 def update_title(cid, text):
-    conn = get_conn()
-    c = conn.cursor()
-    # Use the first 40 characters of the user's prompt as the title
-    title = text[:40] + "..." if len(text) > 40 else text
-    c.execute(
-        "UPDATE conversations SET title=? WHERE id=?",
-        (title, cid)
-    )
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        title = text[:40] + "..." if len(text) > 40 else text
+        c.execute(
+            "UPDATE conversations SET title=? WHERE id=?",
+            (title, cid)
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error updating title: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
 
 def delete_conversation(cid):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
-    c.execute("DELETE FROM conversations WHERE id=?", (cid,))
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
+        c.execute("DELETE FROM conversations WHERE id=?", (cid,))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        st.error(f"Error deleting conversation: {e}")
+        st.stop()
+    finally:
+        if conn:
+            conn.close()
 
 # --------------------------------------------------
 # SESSION STATE
@@ -424,10 +471,8 @@ with st.sidebar:
 
     st.divider()
     
-    # Display chat history buttons
     chats = get_conversations()
     for cid, title in chats:
-        # Highlight the active chat
         is_active = (cid == st.session_state.conversation_id)
         button_type = "primary" if is_active else "secondary"
         
@@ -437,10 +482,8 @@ with st.sidebar:
 
     st.divider()
 
-    # Export and Delete options for the current chat
     st.subheader("⚙️ Options")
     
-    # Export Chat as JSON
     current_chat_messages = get_messages(st.session_state.conversation_id)
     if current_chat_messages:
         chat_json = json.dumps(current_chat_messages, indent=4)
@@ -473,7 +516,6 @@ for msg in chat_history:
 # --------------------------------------------------
 # LLM SETUP
 # --------------------------------------------------
-# Ensure API key is available
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
     st.error("⚠️ GROQ_API_KEY not found. Please set it in your .env file.")
@@ -500,18 +542,14 @@ def typewriter(text, delay=0.01):
 user_prompt = st.chat_input("Ask PrimeMind...")
 
 if user_prompt:
-    # Display user message
     with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(user_prompt)
 
-    # Save user message to DB
     save_message(st.session_state.conversation_id, "user", user_prompt)
 
-    # Update title if it's the first message
     if len(chat_history) == 0:
         update_title(st.session_state.conversation_id, user_prompt)
 
-    # Prepare messages for LangChain
     randomizer = f"(response_variation: {random.randint(1, 999999)})"
     
     messages = [
@@ -519,30 +557,25 @@ if user_prompt:
         SystemMessage(content=randomizer)
     ]
     
-    # Add history
     for msg in chat_history:
         if msg["role"] == "user":
             messages.append(HumanMessage(content=msg["content"]))
         else:
             messages.append(AIMessage(content=msg["content"]))
             
-    # Add current prompt
     messages.append(HumanMessage(content=user_prompt))
 
-    # Get response from LLM
     try:
         with st.spinner("PrimeMind is thinking..."):
             response = llm.invoke(messages)
             assistant_reply = response.content
 
-        # Save assistant response to DB
         save_message(
             st.session_state.conversation_id,
             "assistant",
             assistant_reply
         )
 
-        # Display assistant response
         with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
             st.write_stream(typewriter(assistant_reply))
             
