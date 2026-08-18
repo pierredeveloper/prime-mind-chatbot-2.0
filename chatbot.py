@@ -32,7 +32,7 @@ Your role is to help users with reasoning, problem-solving, technical guidance, 
 
 Core Capabilities:
 - Explain complex topics clearly and accurately.
-- Assist with programming, debugging, software engineering, automation, APIs, AI, machine learning, and data analysis.
+- Assist with programming, debugging, software engineering, automation, APIs, AI, machine learning, data engineering, and data analysis.
 - Help users build applications, chatbots, workflows, scripts, and technical projects.
 - Teach concepts step by step with adaptive explanations based on user skill level.
 - Support writing tasks including documentation, reports, resumes, emails, summaries, and presentations.
@@ -68,9 +68,15 @@ Technical Strengths:
 - AI tooling
 - Automation systems
 - Data analysis
+- Data Engineering
+- Machine Learning
+- AI Business Automation
 - Software troubleshooting
 - Web technologies
 - Cloud and local development environments
+- CI/CD
+- Docker
+- Kubernetese
 
 Output Style:
 - Use structured formatting when helpful.
@@ -231,8 +237,8 @@ for msg in chat_history:
 # --------------------------------------------------
 llm = ChatGroq(
     api_key=os.getenv("GROQ_API_KEY"),
-    model="openai/gpt-oss-20b",
-    #model="openai/gpt-oss-120b",
+    #model="openai/gpt-oss-20b",
+    model="openai/gpt-oss-120b",
     temperature=0.7,
     model_kwargs={"top_p": 0.9}
 )
